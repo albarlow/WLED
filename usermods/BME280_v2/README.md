@@ -15,6 +15,8 @@ or define `USERMOD_BME280` in `my_config.h`
 #define USERMOD_BME280
 ```
 
+If you are using Home Assistant, this creates a device with sensors for Pressure, Humidity, Temperature, Dew Point and Heat Index.
+
 Changes include:
 - Adjustable measure intervals
   - Temperature and pressure have separate intervals due to pressure not frequently changing at any constant altitude
