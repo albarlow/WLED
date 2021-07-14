@@ -10,13 +10,14 @@ class UsermodBME280 : public Usermod
 {
 private:
 // User-defined configuration
-#define Celsius               // Show temperature mesaurement in Celcius. Comment out for Fahrenheit
-#define TemperatureDecimals 1 // Number of decimal places in published temperaure values
-#define HumidityDecimals 2    // Number of decimal places in published humidity values
-#define PressureDecimals 2    // Number of decimal places in published pressure values
-#define TemperatureInterval 5 // Interval to measure temperature (and humidity, dew point if available) in seconds
-#define PressureInterval 300  // Interval to measure pressure in seconds
-#define PublishAlways 0       // Publish values even when they have not changed
+#define Celsius                // Show temperature mesaurement in Celcius. Comment out for Fahrenheit
+#define TemperatureDecimals 1  // Number of decimal places in published temperaure values
+#define HumidityDecimals 0     // Number of decimal places in published humidity values
+#define PressureDecimals 0     // Number of decimal places in published pressure values
+#define TemperatureInterval 30 // Interval to measure temperature (and humidity, dew point if available) in seconds
+#define PressureInterval 300   // Interval to measure pressure in seconds
+#define PublishAlways 0        // Publish values even when they have not changed
+#define HomeAssistantDiscovery 1  // Publish Home Assistant Discovery messages
 
 // Sanity checks
 #if !defined(TemperatureDecimals) || TemperatureDecimals < 0
@@ -36,6 +37,9 @@ private:
 #endif
 #if !defined(PublishAlways)
   #define PublishAlways 0
+#endif
+#if !defined(HomeAssistantDiscovery)
+  #define HomeAssistantDiscovery 0
 #endif
 
 #ifdef ARDUINO_ARCH_ESP32 // ESP32 boards
@@ -82,6 +86,13 @@ private:
   float lastDewPoint;
   float lastPressure;
 
+  bool mqttInitialized = false;
+  String mqttTemperatureTopic = "";
+  String mqttHumidityTopic = "";
+  String mqttPressureTopic = "";
+  String mqttHeatIndexTopic = "";
+  String mqttDewPointTopic = "";
+
   // Store packet IDs of MQTT publications
   uint16_t mqttTemperaturePub = 0;
   uint16_t mqttPressurePub = 0;
@@ -108,6 +119,53 @@ private:
       sensorHeatIndex = EnvironmentCalculations::HeatIndex(_temperature, _humidity, envTempUnit);
       sensorDewPoint = EnvironmentCalculations::DewPoint(_temperature, _humidity, envTempUnit);
     }
+  }
+
+  void _mqttInitialize()
+  {
+    mqttTemperatureTopic = String(mqttDeviceTopic) + "/temperature";
+    mqttPressureTopic = String(mqttDeviceTopic) + "/pressure";
+    mqttHumidityTopic = String(mqttDeviceTopic) + "/humidity";
+    mqttHeatIndexTopic = String(mqttDeviceTopic) + "/heat_index";
+    mqttDewPointTopic = String(mqttDeviceTopic) + "/dew_point";
+
+    String t = String("homeassistant/sensor/") + mqttClientID + "/temperature/config";
+
+    _createMqttSensor("Temperature", mqttTemperatureTopic, "temperature", "°C");
+    _createMqttSensor("Pressure", mqttPressureTopic, "pressure", "hPa");
+    _createMqttSensor("Humidity", mqttHumidityTopic, "humidity", "%");
+    _createMqttSensor("Heat Index", mqttHeatIndexTopic, "temperature", "°C");
+    _createMqttSensor("Dew Point", mqttDewPointTopic, "temperature", "°C");
+  }
+
+  void _createMqttSensor(const String &name, const String &topic, const String &deviceClass, const String &unitOfMeasurement)
+  {
+    String t = String("homeassistant/sensor/") + mqttClientID + "/" + name + "/config";
+    
+    StaticJsonDocument<300> doc;
+
+    doc["name"] = name;
+    doc["state_topic"] = topic;
+    doc["unique_id"] = String(mqttClientID) + name;
+    if (unitOfMeasurement != "")
+      doc["unit_of_measurement"] = unitOfMeasurement;
+    if (deviceClass != "")
+      doc["device_class"] = deviceClass;
+    doc["expire_after"] = 1800;
+
+    JsonObject device = doc.createNestedObject("device"); // attach the sensor to the same device
+    device["name"] = String(mqttClientID);
+    device["identifiers"] = String("wled-sensor-") + String(mqttClientID);
+    device["manufacturer"] = "Aircoookie";
+    device["model"] = "WLED";
+    device["sw_version"] = VERSION;
+
+    String temp;
+    serializeJson(doc, temp);
+    Serial.println(t);
+    Serial.println(temp);
+
+    mqtt->publish(t.c_str(), 0, true, temp.c_str());
   }
 
 public:
@@ -143,7 +201,7 @@ public:
   {
     // BME280 sensor MQTT publishing
     // Check if sensor present and MQTT Connected, otherwise it will crash the MCU
-    if (sensorType != 0 && mqtt != nullptr)
+    if (sensorType != 0 && WLED_MQTT_CONNECTED)
     {
       // Timer to fetch new temperature, humidity and pressure data at intervals
       timer = millis();
@@ -154,62 +212,68 @@ public:
 
         UpdateBME280Data(sensorType);
 
-        float temperature = roundf(sensorTemperature * pow(10, TemperatureDecimals)) / pow(10, TemperatureDecimals);
-        float humidity, heatIndex, dewPoint;
 
-        // If temperature has changed since last measure, create string populated with device topic
-        // from the UI and values read from sensor, then publish to broker
-        if (temperature != lastTemperature || PublishAlways)
+        if (WLED_MQTT_CONNECTED)
         {
-          String topic = String(mqttDeviceTopic) + "/temperature";
-          mqttTemperaturePub = mqtt->publish(topic.c_str(), 0, false, String(temperature, TemperatureDecimals).c_str());
-        }
-
-        lastTemperature = temperature; // Update last sensor temperature for next loop
-
-        if (sensorType == 1) // Only if sensor is a BME280
-        {
-          humidity = roundf(sensorHumidity * pow(10, HumidityDecimals)) / pow(10, HumidityDecimals);
-          heatIndex = roundf(sensorHeatIndex * pow(10, TemperatureDecimals)) / pow(10, TemperatureDecimals);
-          dewPoint = roundf(sensorDewPoint * pow(10, TemperatureDecimals)) / pow(10, TemperatureDecimals);
-
-          if (humidity != lastHumidity || PublishAlways)
+          if (!mqttInitialized && HomeAssistantDiscovery)
           {
-            String topic = String(mqttDeviceTopic) + "/humidity";
-            mqtt->publish(topic.c_str(), 0, false, String(humidity, HumidityDecimals).c_str());
+            _mqttInitialize();
+            mqttInitialized = true;
           }
 
-          if (heatIndex != lastHeatIndex || PublishAlways)
+          float temperature = roundf(sensorTemperature * pow(10, TemperatureDecimals)) / pow(10, TemperatureDecimals);
+          float pressure, humidity, heatIndex, dewPoint;
+          
+
+          // If temperature has changed since last measure, create string populated with device topic
+          // from the UI and values read from sensor, then publish to broker
+          if (temperature != lastTemperature || PublishAlways)
           {
-            String topic = String(mqttDeviceTopic) + "/heat_index";
-            mqtt->publish(topic.c_str(), 0, false, String(heatIndex, TemperatureDecimals).c_str());
+            mqttTemperaturePub = mqtt->publish(mqttTemperatureTopic.c_str(), 0, false, String(temperature, TemperatureDecimals).c_str());
           }
 
-          if (dewPoint != lastDewPoint || PublishAlways)
-          {
-            String topic = String(mqttDeviceTopic) + "/dew_point";
-            mqtt->publish(topic.c_str(), 0, false, String(dewPoint, TemperatureDecimals).c_str());
-          }
+          lastTemperature = temperature; // Update last sensor temperature for next loop
 
-          lastHumidity = humidity;
-          lastHeatIndex = heatIndex;
-          lastDewPoint = dewPoint;
+          if (sensorType == 1) // Only if sensor is a BME280
+          {
+            pressure = roundf(sensorPressure * pow(10, PressureDecimals)) / pow(10, PressureDecimals);
+            humidity = roundf(sensorHumidity * pow(10, HumidityDecimals)) / pow(10, HumidityDecimals);
+            heatIndex = roundf(sensorHeatIndex * pow(10, TemperatureDecimals)) / pow(10, TemperatureDecimals);
+            dewPoint = roundf(sensorDewPoint * pow(10, TemperatureDecimals)) / pow(10, TemperatureDecimals);
+                        
+            if (humidity != lastHumidity || PublishAlways)
+            {
+              mqtt->publish(mqttHumidityTopic.c_str(), 0, false, String(humidity, HumidityDecimals).c_str());
+            }
+              
+            if (pressure != lastPressure || PublishAlways)
+            {
+              mqttPressurePub = mqtt->publish(mqttPressureTopic.c_str(), 0, true, String(pressure, PressureDecimals).c_str());
+            }
+
+            // If heat index has changed OR PublishAlways set to true, publish to MQTT
+            if (heatIndex != lastHeatIndex || PublishAlways)
+            {
+              mqtt->publish(mqttHeatIndexTopic.c_str(), 0, false, String(heatIndex, TemperatureDecimals).c_str());
+            }
+
+            // If dew point has changed OR PublishAlways set to true, publish to MQTT
+            if (dewPoint != lastDewPoint || PublishAlways)
+            {
+              mqtt->publish(mqttDewPointTopic.c_str(), 0, false, String(dewPoint, TemperatureDecimals).c_str());
+            }
+
+            lastPressure = pressure;
+            lastHumidity = humidity;
+            lastHeatIndex = heatIndex;
+            lastDewPoint = dewPoint;
+          }
         }
-      }
-
-      if (timer - lastPressureMeasure >= PressureInterval * 1000 || mqttPressurePub == 0)
-      {
-        lastPressureMeasure = timer;
-
-        float pressure = roundf(sensorPressure * pow(10, PressureDecimals)) / pow(10, PressureDecimals);
-
-        if (pressure != lastPressure || PublishAlways)
+        else
         {
-          String topic = String(mqttDeviceTopic) + "/pressure";
-          mqttPressurePub = mqtt->publish(topic.c_str(), 0, true, String(pressure, PressureDecimals).c_str());
+          Serial.println("Missing MQTT connection. Not publishing data");
+          mqttInitialized = false;
         }
-
-        lastPressure = pressure;
       }
     }
   }
