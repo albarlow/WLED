@@ -15,7 +15,6 @@ private:
 #define HumidityDecimals 0     // Number of decimal places in published humidity values
 #define PressureDecimals 0     // Number of decimal places in published pressure values
 #define TemperatureInterval 30 // Interval to measure temperature (and humidity, dew point if available) in seconds
-#define PressureInterval 300   // Interval to measure pressure in seconds
 #define PublishAlways 0        // Publish values even when they have not changed
 #define HomeAssistantDiscovery 1  // Publish Home Assistant Discovery messages
 
@@ -31,9 +30,6 @@ private:
 #endif
 #if !defined(TemperatureInterval) || TemperatureInterval < 0
   #define TemperatureInterval 1
-#endif
-#if !defined(PressureInterval) || PressureInterval < 0
-  #define PressureInterval TemperatureInterval
 #endif
 #if !defined(PublishAlways)
   #define PublishAlways 0
@@ -121,6 +117,7 @@ private:
     }
   }
 
+  // Define 
   void _mqttInitialize()
   {
     mqttTemperatureTopic = String(mqttDeviceTopic) + "/temperature";
@@ -138,6 +135,7 @@ private:
     _createMqttSensor("Dew Point", mqttDewPointTopic, "temperature", "°C");
   }
 
+  // Create an MQTT Sensor for Home Assistant Discovery purposes, this includes a pointer to the topic that is published to in the Loop.
   void _createMqttSensor(const String &name, const String &topic, const String &deviceClass, const String &unitOfMeasurement)
   {
     String t = String("homeassistant/sensor/") + mqttClientID + "/" + name + "/config";
