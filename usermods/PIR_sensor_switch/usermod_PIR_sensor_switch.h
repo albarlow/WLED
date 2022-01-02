@@ -76,6 +76,9 @@ private:
   bool m_nightTimeOnly = false;
   // flag to send MQTT message only (assuming it is enabled)
   bool m_mqttOnly = false;
+  // flag to enable triggering only if WLED is initially off (LEDs are not on, preventing running effect being overwritten by PIR)
+  bool m_offOnly = false;
+  bool PIRtriggered = false;
 
   unsigned long lastLoop = 0;
 
@@ -87,6 +90,7 @@ private:
   static const char _offPreset[];
   static const char _nightTime[];
   static const char _mqttOnly[];
+  static const char _offOnly[];
 
   /**
    * check if it is daytime
@@ -118,6 +122,8 @@ private:
    */
   void switchStrip(bool switchOn)
   {
+    if (m_offOnly && bri && (switchOn || (!PIRtriggered && !switchOn))) return;
+    PIRtriggered = switchOn;
     if (switchOn && m_onPreset) {
       applyPreset(m_onPreset);
     } else if (!switchOn && m_offPreset) {
@@ -193,16 +199,18 @@ public:
    */
   void setup()
   {
-    // pin retrieved from cfg.json (readFromConfig()) prior to running setup()
-    if (!pinManager.allocatePin(PIRsensorPin,false)) {
-      PIRsensorPin = -1;  // allocation failed
-      enabled = false;
-      DEBUG_PRINTLN(F("PIRSensorSwitch pin allocation failed."));
-    } else {
-      // PIR Sensor mode INPUT_PULLUP
-      pinMode(PIRsensorPin, INPUT_PULLUP);
-      if (enabled) {
+    if (enabled) {
+      // pin retrieved from cfg.json (readFromConfig()) prior to running setup()
+      if (PIRsensorPin >= 0 && pinManager.allocatePin(PIRsensorPin, false, PinOwner::UM_PIR)) {
+        // PIR Sensor mode INPUT_PULLUP
+        pinMode(PIRsensorPin, INPUT_PULLUP);
         sensorPinState = digitalRead(PIRsensorPin);
+      } else {
+        if (PIRsensorPin >= 0) {
+          DEBUG_PRINTLN(F("PIRSensorSwitch pin allocation failed."));
+        }
+        PIRsensorPin = -1;  // allocation failed
+        enabled = false;
       }
     }
     initDone = true;
@@ -221,8 +229,8 @@ public:
    */
   void loop()
   {
-    // only check sensors 10x/s
-    if (millis() - lastLoop < 100 || strip.isUpdating()) return;
+    // only check sensors 4x/s
+    if (!enabled || millis() - lastLoop < 250 || strip.isUpdating()) return;
     lastLoop = millis();
 
     if (!updatePIRsensorState()) {
@@ -313,6 +321,7 @@ public:
     top[FPSTR(_offPreset)] = m_offPreset;
     top[FPSTR(_nightTime)] = m_nightTimeOnly;
     top[FPSTR(_mqttOnly)]  = m_mqttOnly;
+    top[FPSTR(_offOnly)]   = m_offOnly;
     DEBUG_PRINTLN(F("PIR config saved."));
   }
 
@@ -348,6 +357,7 @@ public:
 
     m_nightTimeOnly = top[FPSTR(_nightTime)] | m_nightTimeOnly;
     m_mqttOnly      = top[FPSTR(_mqttOnly)] | m_mqttOnly;
+    m_offOnly       = top[FPSTR(_offOnly)] | m_offOnly;
 
     DEBUG_PRINT(FPSTR(_name));
     if (!initDone) {
@@ -359,8 +369,8 @@ public:
         if (oldPin != PIRsensorPin && oldPin >= 0) {
           // if we are changing pin in settings page
           // deallocate old pin
-          pinManager.deallocatePin(oldPin);
-          if (pinManager.allocatePin(PIRsensorPin,false)) {
+          pinManager.deallocatePin(oldPin, PinOwner::UM_PIR);
+          if (pinManager.allocatePin(PIRsensorPin, false, PinOwner::UM_PIR)) {
             pinMode(PIRsensorPin, INPUT_PULLUP);
           } else {
             // allocation failed
@@ -375,7 +385,7 @@ public:
       DEBUG_PRINTLN(F(" config (re)loaded."));
     }
     // use "return !top["newestParameter"].isNull();" when updating Usermod with new features
-    return true;
+    return !top[FPSTR(_offOnly)].isNull();
   }
 
   /**
@@ -396,3 +406,4 @@ const char PIRsensorSwitch::_onPreset[]       PROGMEM = "on-preset";
 const char PIRsensorSwitch::_offPreset[]      PROGMEM = "off-preset";
 const char PIRsensorSwitch::_nightTime[]      PROGMEM = "nighttime-only";
 const char PIRsensorSwitch::_mqttOnly[]       PROGMEM = "mqtt-only";
+const char PIRsensorSwitch::_offOnly[]        PROGMEM = "off-only";

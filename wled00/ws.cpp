@@ -26,13 +26,26 @@ void wsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventTyp
       //the whole message is in a single frame and we got all of its data (max. 1450byte)
       if(info->opcode == WS_TEXT)
       {
+        if (len > 0 && len < 10 && data[0] == 'p') {
+          //application layer ping/pong heartbeat.
+          //client-side socket layer ping packets are unresponded (investigate)
+          client->text(F("pong"));
+          return;
+        }
         bool verboseResponse = false;
         { //scope JsonDocument so it releases its buffer
-          DynamicJsonDocument jsonBuffer(JSON_BUFFER_SIZE);
-          DeserializationError error = deserializeJson(jsonBuffer, data, len);
-          JsonObject root = jsonBuffer.as<JsonObject>();
-          if (error || root.isNull()) return;
+          #ifdef WLED_USE_DYNAMIC_JSON
+          DynamicJsonDocument doc(JSON_BUFFER_SIZE);
+          #else
+          if (!requestJSONBufferLock(11)) return;
+          #endif
 
+          DeserializationError error = deserializeJson(doc, data, len);
+          JsonObject root = doc.as<JsonObject>();
+          if (error || root.isNull()) {
+            releaseJSONBufferLock();
+            return;
+          }
           if (root["v"] && root.size() == 1) {
             //if the received value is just "{"v":true}", send only to this client
             verboseResponse = true;
@@ -40,14 +53,13 @@ void wsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventTyp
           {
             wsLiveClientId = root["lv"] ? client->id() : 0;
           } else {
-            fileDoc = &jsonBuffer;
             verboseResponse = deserializeState(root);
-            fileDoc = nullptr;
             if (!interfaceUpdateCallMode) {
               //special case, only on playlist load, avoid sending twice in rapid succession
               if (millis() - lastInterfaceUpdate > 1700) verboseResponse = false;
             }
           }
+          releaseJSONBufferLock(); // will clean fileDoc
         }
         //update if it takes longer than 300ms until next "broadcast"
         if (verboseResponse && (millis() - lastInterfaceUpdate < 1700 || !interfaceUpdateCallMode)) sendDataWs(client);
@@ -86,16 +98,23 @@ void sendDataWs(AsyncWebSocketClient * client)
   AsyncWebSocketMessageBuffer * buffer;
 
   { //scope JsonDocument so it releases its buffer
+    #ifdef WLED_USE_DYNAMIC_JSON
     DynamicJsonDocument doc(JSON_BUFFER_SIZE);
+    #else
+    if (!requestJSONBufferLock(12)) return;
+    #endif
     JsonObject state = doc.createNestedObject("state");
     serializeState(state);
     JsonObject info  = doc.createNestedObject("info");
     serializeInfo(info);
     size_t len = measureJson(doc);
     buffer = ws.makeBuffer(len);
-    if (!buffer) return; //out of memory
-
+    if (!buffer) {
+      releaseJSONBufferLock();
+      return; //out of memory
+    }
     serializeJson(doc, (char *)buffer->get(), len +1);
+    releaseJSONBufferLock();
   } 
   if (client) {
     client->text(buffer);

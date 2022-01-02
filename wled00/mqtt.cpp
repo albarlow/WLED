@@ -26,21 +26,21 @@ void onMqttConnect(bool sessionPresent)
   char subuf[38];
 
   if (mqttDeviceTopic[0] != 0) {
-    strcpy(subuf, mqttDeviceTopic);
+    strlcpy(subuf, mqttDeviceTopic, 33);
     mqtt->subscribe(subuf, 0);
     strcat_P(subuf, PSTR("/col"));
     mqtt->subscribe(subuf, 0);
-    strcpy(subuf, mqttDeviceTopic);
+    strlcpy(subuf, mqttDeviceTopic, 33);
     strcat_P(subuf, PSTR("/api"));
     mqtt->subscribe(subuf, 0);
   }
 
   if (mqttGroupTopic[0] != 0) {
-    strcpy(subuf, mqttGroupTopic);
+    strlcpy(subuf, mqttGroupTopic, 33);
     mqtt->subscribe(subuf, 0);
     strcat_P(subuf, PSTR("/col"));
     mqtt->subscribe(subuf, 0);
-    strcpy(subuf, mqttGroupTopic);
+    strlcpy(subuf, mqttGroupTopic, 33);
     strcat_P(subuf, PSTR("/api"));
     mqtt->subscribe(subuf, 0);
   }
@@ -91,11 +91,14 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
     colorUpdated(CALL_MODE_DIRECT_CHANGE);
   } else if (strcmp_P(topic, PSTR("/api")) == 0) {
     if (payload[0] == '{') { //JSON API
+      #ifdef WLED_USE_DYNAMIC_JSON
       DynamicJsonDocument doc(JSON_BUFFER_SIZE);
+      #else
+      if (!requestJSONBufferLock(15)) return;
+      #endif
       deserializeJson(doc, payloadStr);
-      fileDoc = &doc;
       deserializeState(doc.as<JsonObject>());
-      fileDoc = nullptr;
+      releaseJSONBufferLock();
     } else { //HTTP API
       String apireq = "win&";
       apireq += (char*)payloadStr;
@@ -122,24 +125,24 @@ void publishMqtt()
   char subuf[38];
 
   sprintf_P(s, PSTR("%u"), bri);
-  strcpy(subuf, mqttDeviceTopic);
+  strlcpy(subuf, mqttDeviceTopic, 33);
   strcat_P(subuf, PSTR("/g"));
-  mqtt->publish(subuf, 0, true, s);
+  mqtt->publish(subuf, 0, true, s);         // retain message
 
   sprintf_P(s, PSTR("#%06X"), (col[3] << 24) | (col[0] << 16) | (col[1] << 8) | (col[2]));
-  strcpy(subuf, mqttDeviceTopic);
+  strlcpy(subuf, mqttDeviceTopic, 33);
   strcat_P(subuf, PSTR("/c"));
-  mqtt->publish(subuf, 0, true, s);
+  mqtt->publish(subuf, 0, true, s);         // retain message
 
-  strcpy(subuf, mqttDeviceTopic);
+  strlcpy(subuf, mqttDeviceTopic, 33);
   strcat_P(subuf, PSTR("/status"));
-  mqtt->publish(subuf, 0, true, "online");
+  mqtt->publish(subuf, 0, true, "online");  // retain message for a LWT
 
-  char apires[1024];
+  char apires[1024];                        // allocating 1024 bytes from stack can be risky
   XML_response(nullptr, apires);
-  strcpy(subuf, mqttDeviceTopic);
+  strlcpy(subuf, mqttDeviceTopic, 33);
   strcat_P(subuf, PSTR("/v"));
-  mqtt->publish(subuf, 0, false, apires);
+  mqtt->publish(subuf, 0, false, apires);   // do not retain message
 }
 
 
@@ -167,9 +170,9 @@ bool initMqtt()
   mqtt->setClientId(mqttClientID);
   if (mqttUser[0] && mqttPass[0]) mqtt->setCredentials(mqttUser, mqttPass);
 
-  strcpy(mqttStatusTopic, mqttDeviceTopic);
+  strlcpy(mqttStatusTopic, mqttDeviceTopic, 33);
   strcat_P(mqttStatusTopic, PSTR("/status"));
-  mqtt->setWill(mqttStatusTopic, 0, true, "offline");
+  mqtt->setWill(mqttStatusTopic, 0, true, "offline"); // LWT message
   mqtt->setKeepAlive(MQTT_KEEP_ALIVE_TIME);
   mqtt->connect();
   return true;

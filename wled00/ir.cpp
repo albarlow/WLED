@@ -71,9 +71,11 @@ void decBrightness()
 // apply preset or fallback to a effect and palette if it doesn't exist
 void presetFallback(uint8_t presetID, uint8_t effectID, uint8_t paletteID) 
 {
-  if (!applyPreset(presetID, CALL_MODE_BUTTON)) { 
+  byte prevError = errorFlag;
+  if (!applyPreset(presetID, CALL_MODE_BUTTON_PRESET)) { 
     effectCurrent = effectID;      
     effectPalette = paletteID;
+    errorFlag = prevError; //clear error 12 from non-existent preset
   }
 }
 
@@ -85,7 +87,7 @@ bool decodeIRCustom(uint32_t code)
   {
     //just examples, feel free to modify or remove
     case IRCUSTOM_ONOFF : toggleOnOff(); break;
-    case IRCUSTOM_MACRO1 : applyPreset(1, CALL_MODE_BUTTON); break;
+    case IRCUSTOM_MACRO1 : applyPreset(1, CALL_MODE_BUTTON_PRESET); break;
 
     default: return false;
   }
@@ -161,7 +163,12 @@ void decodeIR(uint32_t code)
   }
   lastValidCode = 0; irTimesRepeated = 0;
   if (decodeIRCustom(code)) return;
-  if      (code > 0xFFFFFF) return; //invalid code
+  if (irEnabled == 8) { // any remote configurable with ir.json file
+    decodeIRJson(code);
+    colorUpdated(CALL_MODE_BUTTON);
+    return;
+  }
+  if (code > 0xFFFFFF) return; //invalid code
   switch (irEnabled) {
     case 1: 
       if (code > 0xF80000) {
@@ -178,7 +185,7 @@ void decodeIR(uint32_t code)
                                           // "VOL +" controls effect, "VOL -" controls colour/palette, "MUTE" 
                                           // sets bright plain white
     case 7: decodeIR9(code);    break;
-    case 8: decodeIRJson(code); break;   // any remote configurable with ir.json file
+    //case 8: return; // ir.json file, handled above switch statement
     default: return;
   }
 
@@ -560,62 +567,73 @@ Sample:
 void decodeIRJson(uint32_t code) 
 {
   char objKey[10];
-  const char* cmd;
   String cmdStr;
-  DynamicJsonDocument irDoc(JSON_BUFFER_SIZE);
   JsonObject fdo;
   JsonObject jsonCmdObj;
 
-  sprintf(objKey, "\"0x%X\":", code);
+  #ifdef WLED_USE_DYNAMIC_JSON
+  DynamicJsonDocument doc(JSON_BUFFER_SIZE);
+  #else
+  if (!requestJSONBufferLock(13)) return;
+  #endif
 
-  errorFlag = readObjectFromFile("/ir.json", objKey, &irDoc) ? ERR_NONE : ERR_FS_PLOAD;
-  fdo = irDoc.as<JsonObject>();
+  sprintf_P(objKey, PSTR("\"0x%lX\":"), (unsigned long)code);
+
+  // attempt to read command from ir.json
+  // this may fail for two reasons: ir.json does not exist or IR code not found
+  // if the IR code is not found readObjectFromFile() will clean() doc JSON document
+  // so we can differentiate between the two
+  readObjectFromFile("/ir.json", objKey, &doc);
+  fdo = doc.as<JsonObject>();
   lastValidCode = 0;
-  if (!errorFlag) 
-  {
-    cmd = fdo["cmd"];
-    cmdStr = String(cmd);
-    jsonCmdObj = fdo["cmd"];
-    if (!cmdStr.isEmpty()) 
-    {
-      if (cmdStr.startsWith("!")) {
-        // call limited set of C functions
-        if (cmdStr.startsWith(F("!incBri"))) {
-          lastValidCode = code;
-          incBrightness();
-        } else if (cmdStr.startsWith(F("!decBri"))) {
-          lastValidCode = code;
-          decBrightness();
-        } else if (cmdStr.startsWith(F("!presetF"))) { //!presetFallback
-          uint8_t p1 = fdo["PL"] ? fdo["PL"] : 1;
-          uint8_t p2 = fdo["FX"] ? fdo["FX"] : random8(100);
-          uint8_t p3 = fdo["FP"] ? fdo["FP"] : 0;
-          presetFallback(p1, p2, p3);
-        }
-      } else {
-        // HTTP API command
-        if (cmdStr.indexOf("~") || fdo["rpt"]) 
-        {
-          // repeatable action
-          lastValidCode = code;
-        }
-        if (effectCurrent == 0 && cmdStr.indexOf("FP=") > -1) {
-          // setting palette but it wont show because effect is solid
-          effectCurrent = FX_MODE_GRADIENT;
-        }
-        if (!cmdStr.startsWith("win&")) {
-          cmdStr = "win&" + cmdStr;
-        }
-        handleSet(nullptr, cmdStr, false); 
-      }        
-    } else if (!jsonCmdObj.isNull()) {
-      // command is JSON object
-      //allow applyPreset() to reuse JSON buffer, or it would alloc. a second buffer and run out of mem.
-      fileDoc = &irDoc;
-      deserializeState(jsonCmdObj, CALL_MODE_BUTTON);
-      fileDoc = nullptr;
-    }
+  if (fdo.isNull()) {
+    //the received code does not exist
+    if (!WLED_FS.exists("/ir.json")) errorFlag = ERR_FS_IRLOAD; //warn if IR file itself doesn't exist
+    releaseJSONBufferLock();
+    return;
   }
+
+  cmdStr = fdo["cmd"].as<String>();
+  jsonCmdObj = fdo["cmd"]; //object
+
+  if (!cmdStr.isEmpty()) 
+  {
+    if (cmdStr.startsWith("!")) {
+      // call limited set of C functions
+      if (cmdStr.startsWith(F("!incBri"))) {
+        lastValidCode = code;
+        incBrightness();
+      } else if (cmdStr.startsWith(F("!decBri"))) {
+        lastValidCode = code;
+        decBrightness();
+      } else if (cmdStr.startsWith(F("!presetF"))) { //!presetFallback
+        uint8_t p1 = fdo["PL"] ? fdo["PL"] : 1;
+        uint8_t p2 = fdo["FX"] ? fdo["FX"] : random8(MODE_COUNT);
+        uint8_t p3 = fdo["FP"] ? fdo["FP"] : 0;
+        presetFallback(p1, p2, p3);
+      }
+    } else {
+      // HTTP API command
+      if (cmdStr.indexOf("~") || fdo["rpt"]) 
+      {
+        // repeatable action
+        lastValidCode = code;
+      }
+      if (effectCurrent == 0 && cmdStr.indexOf("FP=") > -1) {
+        // setting palette but it wont show because effect is solid
+        effectCurrent = FX_MODE_GRADIENT;
+      }
+      if (!cmdStr.startsWith("win&")) {
+        cmdStr = "win&" + cmdStr;
+      }
+      handleSet(nullptr, cmdStr, false);
+    }
+    colorUpdated(CALL_MODE_BUTTON);
+  } else if (!jsonCmdObj.isNull()) {
+    // command is JSON object
+    deserializeState(jsonCmdObj, CALL_MODE_BUTTON_PRESET);
+  }
+  releaseJSONBufferLock();
 }
 
 void initIR()
@@ -643,9 +661,8 @@ void handleIR()
       {
         if (results.value != 0) // only print results if anything is received ( != 0 )
         {
-          Serial.print("IR recv\r\n0x");
-          Serial.println((uint32_t)results.value, HEX);
-          Serial.println();
+					if (!pinManager.isPinAllocated(1)) //GPIO 1 - Serial TX pin
+          	Serial.printf_P(PSTR("IR recv: 0x%lX\n"), (unsigned long)results.value);
         }
         decodeIR(results.value);
         irrecv->resume();
