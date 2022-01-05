@@ -11,6 +11,10 @@
  */
 //#include "../usermods/EXAMPLE_v2/usermod_v2_example.h"
 
+#ifdef USERMOD_PIR_SENSOR_SWITCH
+#include "../usermods/pir_sensor_switch/usermod_pir_sensor_switch.h"
+#endif
+
 #ifdef USERMOD_BATTERY_STATUS_BASIC
 #include "../usermods/battery_status_basic/usermod_v2_battery_status_basic.h"
 #endif
@@ -45,6 +49,12 @@
 #ifdef USERMOD_BME280
 #include "../usermods/BME280_v2/usermod_bme280.h"
 #endif
+
+// BH1750 v2 usermod. Define "USERMOD_BH1750" in my_config.h
+#ifdef USERMOD_BH1750
+#include "../usermods/BH1750_v2/usermod_bh1750.h"
+#endif
+
 #ifdef USERMOD_FOUR_LINE_DISPLAY
   #ifdef USE_ALT_DISPlAY
     #include "../usermods/usermod_v2_four_line_display_ALT/usermod_v2_four_line_display_ALT.h"
@@ -116,6 +126,10 @@ void registerUsermods()
    * \/ \/ \/
    */
   //usermods.add(new MyExampleUsermod());
+  
+  #ifdef USERMOD_PIR_SENSOR_SWITCH
+  usermods.add(new PIRsensorSwitch());
+  #endif
 
   #ifdef USERMOD_BATTERY_STATUS_BASIC
   usermods.add(new UsermodBatteryBasic());
@@ -137,9 +151,14 @@ void registerUsermods()
   usermods.add(new BuzzerUsermod());
   #endif
 
+  #ifdef USERMOD_BH1750
+  usermods.add(new Usermod_BH1750());
+  #endif
+
   #ifdef USERMOD_BME280
   usermods.add(new UsermodBME280());
   #endif
+
   #ifdef USERMOD_SENSORSTOMQTT
   usermods.add(new UserMod_SensorsToMQTT());
   #endif
