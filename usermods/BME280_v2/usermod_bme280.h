@@ -11,12 +11,12 @@ class UsermodBME280 : public Usermod
 private:
 // User-defined configuration
 #define Celsius               // Show temperature mesaurement in Celcius. Comment out for Fahrenheit
-#define TemperatureDecimals 1 // Number of decimal places in published temperaure values
-#define HumidityDecimals 2    // Number of decimal places in published humidity values
-#define PressureDecimals 2    // Number of decimal places in published pressure values
+#define TemperatureDecimals 0 // Number of decimal places in published temperaure values
+#define HumidityDecimals 0    // Number of decimal places in published humidity values
+#define PressureDecimals 0    // Number of decimal places in published pressure values
 #define TemperatureInterval 5 // Interval to measure temperature (and humidity, dew point if available) in seconds
 #define PressureInterval 300  // Interval to measure pressure in seconds
-#define PublishAlways 0       // Publish values even when they have not changed
+#define PublishAlways 1       // Publish values even when they have not changed
 
 // Sanity checks
 #if !defined(TemperatureDecimals) || TemperatureDecimals < 0

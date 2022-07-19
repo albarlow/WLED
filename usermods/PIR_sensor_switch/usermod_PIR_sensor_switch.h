@@ -74,7 +74,7 @@ private:
   uint8_t m_onPreset        = 0;              // on preset
   uint8_t m_offPreset       = 0;              // off preset
   bool m_nightTimeOnly      = false;          // flag to indicate that PIR sensor should activate WLED during nighttime only
-  bool m_mqttOnly           = false;          // flag to send MQTT message only (assuming it is enabled)
+  bool m_mqttOnly           = true;          // flag to send MQTT message only (assuming it is enabled)
   // flag to enable triggering only if WLED is initially off (LEDs are not on, preventing running effect being overwritten by PIR)
   bool m_offOnly            = false;
 
