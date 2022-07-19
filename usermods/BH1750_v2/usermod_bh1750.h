@@ -89,7 +89,7 @@ private:
     doc["expire_after"] = 1800;
 
     JsonObject device = doc.createNestedObject("device"); // attach the sensor to the same device
-    device["name"] = F(serverDescription);
+    device["name"] = serverDescription;
     device["identifiers"] = "wled-sensor-" + String(mqttClientID);
     device["manufacturer"] = "WLED";
     device["model"] = "FOSS";
